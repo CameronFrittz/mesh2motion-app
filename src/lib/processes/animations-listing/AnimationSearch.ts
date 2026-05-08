@@ -191,14 +191,17 @@ export class AnimationSearch extends EventTarget {
         console.error('Unknown skeleton type for animation previews. Add the rig to RigConfig.ts.')
       }
 
-      const anim_name: string = animation_clip.name
+      // For default-library animations, the WebM preview file is named after the
+      // ORIGINAL clip name. If the user renamed the clip, fall back to the original
+      // name (stashed in metadata.original_clip_name) so the preview still resolves.
+      const preview_lookup_name: string = animation_clip.metadata?.original_clip_name ?? animation_clip.name
       const theme_name: string = this.theme_manager.get_current_theme()
       const source_type = animation_clip.metadata?.source_type ?? 'default-library'
       const is_imported_animation = source_type !== 'default-library'
       const should_generate_model_preview = this.animation_preview_factory !== null
 
       const preview_data_src_attribute = !is_imported_animation
-        ? ` data-src="../animpreviews/${preview_folder}/${theme_name}_${anim_name}.webm"`
+        ? ` data-src="../animpreviews/${preview_folder}/${theme_name}_${preview_lookup_name}.webm"`
         : ''
       const preview_data_generated_index_attribute = should_generate_model_preview
         ? ` data-generated-preview-index="${original_index}"`
@@ -214,11 +217,11 @@ export class AnimationSearch extends EventTarget {
         custom_animation_badge_html = '<span class="anim-custom-badge" title="Animation pack" aria-label="Animation pack">P</span>'
       }
 
-      const rename_button_html = is_imported_animation
-        ? `<button type="button" class="secondary-button anim-rename-button" data-index="${original_index}" title="Rename animation" aria-label="Rename animation">
+      // Allow renaming any animation (default library or imported) so the user can
+      // align exported clip names with what their game expects.
+      const rename_button_html = `<button type="button" class="secondary-button anim-rename-button" data-index="${original_index}" title="Rename animation" aria-label="Rename animation">
             <span class="material-symbols-outlined">edit</span>
           </button>`
-        : ''
 
       const delete_button_html = is_imported_animation
         ? `<button type="button" class="secondary-button anim-delete-button" data-index="${original_index}" title="Delete animation" aria-label="Delete animation">

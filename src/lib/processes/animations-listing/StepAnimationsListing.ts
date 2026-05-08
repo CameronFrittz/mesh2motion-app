@@ -632,6 +632,12 @@ export class StepAnimationsListing extends EventTarget {
       }
     }
 
+    // Stash the original clip name so things keyed off it (e.g. the default-library
+    // WebM preview file lookup) keep resolving after a rename. Only set on first rename.
+    if (animation_pair.metadata.original_clip_name === undefined) {
+      animation_pair.metadata.original_clip_name = current_name
+    }
+
     animation_pair.original_animation_clip.name = trimmed_new_name
     animation_pair.display_animation_clip.name = trimmed_new_name
     this.animation_search?.rerender_current_filter()

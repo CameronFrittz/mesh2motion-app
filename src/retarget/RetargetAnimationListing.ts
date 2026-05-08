@@ -214,6 +214,16 @@ export class RetargetAnimationListing extends EventTarget {
     if (animations_container !== null) {
       animations_container.addEventListener('click', (event) => {
         const target = event.target as HTMLElement
+
+        const rename_button = target.closest<HTMLButtonElement>('.anim-rename-button')
+        if (rename_button !== null) {
+          const index = parseInt(rename_button.dataset.index ?? '-1')
+          if (index >= 0) {
+            void this.rename_animation(index)
+          }
+          return
+        }
+
         const button = target.closest('.play')
 
         if (button !== null) {
@@ -224,6 +234,58 @@ export class RetargetAnimationListing extends EventTarget {
         }
       })
     }
+  }
+
+  private async rename_animation (index: number): Promise<void> {
+    const animation_pair = this.animation_clips_loaded[index]
+    if (animation_pair === undefined) {
+      return
+    }
+
+    const current_name = animation_pair.display_animation_clip.name
+    const new_name = window.prompt('Animation name', current_name)
+    if (new_name === null) {
+      return
+    }
+
+    const trimmed_new_name = new_name.trim()
+    if (trimmed_new_name === '' || trimmed_new_name === current_name) {
+      return
+    }
+
+    // Persist the rename to the saved animation pack so it survives reloads.
+    const metadata = animation_pair.metadata
+    if (metadata.source_type === 'stored-pack' &&
+        metadata.pack_id !== undefined &&
+        metadata.original_clip_name !== undefined) {
+      try {
+        const record = await this.animation_pack_store.get(metadata.pack_id)
+        if (record !== null) {
+          record.animation_name_overrides = {
+            ...(record.animation_name_overrides ?? {}),
+            [metadata.original_clip_name]: trimmed_new_name
+          }
+          record.updated_at = Date.now()
+          await this.animation_pack_store.put(record)
+        }
+      } catch (error) {
+        console.warn('Failed to persist animation rename:', error)
+      }
+    }
+
+    // Stash the original name on first rename so preview lookups (which key off
+    // the original GLB clip name) keep resolving.
+    if (metadata.original_clip_name === undefined) {
+      metadata.original_clip_name = current_name
+    }
+
+    animation_pair.original_animation_clip.name = trimmed_new_name
+    animation_pair.display_animation_clip.name = trimmed_new_name
+
+    // Invalidate cached retargeted preview clips for this animation.
+    this.preview_clip_cache.clear()
+
+    this.animation_search?.rerender_current_filter()
   }
 
   private preview_animation_clip (animation: AnimationClip): AnimationClip {

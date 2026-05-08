@@ -445,4 +445,18 @@ export class StepBoneMapping extends EventTarget {
     this.update_bone_match_type_display()
     this.dispatchEvent(new CustomEvent('bone-mappings-changed'))
   }
+
+  public restore_bone_mappings (
+    bone_mappings: Map<string, string>,
+    target_mapping_type: TargetBoneMappingType
+  ): void {
+    const retarget_service: AnimationRetargetService = AnimationRetargetService.getInstance()
+    retarget_service.set_bone_mappings(new Map(bone_mappings))
+    retarget_service.set_target_mapping_type(target_mapping_type)
+
+    this.update_target_bones_list()
+    this.update_clear_button_visibility()
+    this.update_bone_match_type_display()
+    this.dispatchEvent(new CustomEvent('bone-mappings-changed'))
+  }
 }

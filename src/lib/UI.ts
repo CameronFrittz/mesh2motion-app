@@ -6,6 +6,11 @@ export class UI {
   dom_upload_model_button: HTMLButtonElement | null = null
   dom_load_model_button: HTMLButtonElement | null = null
   dom_load_model_debug_checkbox: HTMLInputElement | null = null
+  dom_saved_models_select: HTMLSelectElement | null = null
+  dom_load_saved_model_button: HTMLButtonElement | null = null
+  dom_delete_saved_model_button: HTMLButtonElement | null = null
+  dom_save_model_button: HTMLButtonElement | null = null
+  dom_saved_model_status: HTMLElement | null = null
 
   // toggle for showing/hiding skeleton in the 3D view
   dom_show_skeleton_container: HTMLElement | null = null
@@ -85,6 +90,8 @@ export class UI {
 
   dom_import_animations_button: HTMLButtonElement | null = null
   dom_import_animations_input: HTMLInputElement | null = null
+  dom_import_animation_pack_button: HTMLButtonElement | null = null
+  dom_import_animation_pack_input: HTMLInputElement | null = null
   dom_extend_arm_range_input: HTMLInputElement | null = null
   dom_extend_arm_numeric_input: HTMLInputElement | null = null
   dom_arm_extension_options: HTMLElement | null = null
@@ -130,6 +137,11 @@ export class UI {
     this.dom_upload_model_button = document.querySelector('#model-upload')
     this.dom_load_model_button = document.querySelector('#load-model-button')
     this.dom_load_model_debug_checkbox = document.querySelector('#load-model-debug-checkbox')
+    this.dom_saved_models_select = document.querySelector('#saved-models-select')
+    this.dom_load_saved_model_button = document.querySelector('#load-saved-model-button')
+    this.dom_delete_saved_model_button = document.querySelector('#delete-saved-model-button')
+    this.dom_save_model_button = document.querySelector('#save-model-button')
+    this.dom_saved_model_status = document.querySelector('#saved-model-status')
 
     // UI controls with load skeleton step
     this.dom_rotate_model_x_button = document.querySelector('#rotate-model-x-button')
@@ -193,6 +205,8 @@ export class UI {
     this.dom_export_button = document.querySelector('#export-button')
     this.dom_import_animations_button = document.querySelector('#import-animations-button')
     this.dom_import_animations_input = document.querySelector('#import-animations-input')
+    this.dom_import_animation_pack_button = document.querySelector('#import-animation-pack-button')
+    this.dom_import_animation_pack_input = document.querySelector('#import-animation-pack-input')
     this.dom_mirror_animations_checkbox = document.querySelector('#mirror-animations-checkbox')
     this.dom_reset_arm_extension_button = document.querySelector('#reset-arm-extension-button')
 

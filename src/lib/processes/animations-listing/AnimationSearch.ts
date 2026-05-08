@@ -4,6 +4,9 @@ import { RigConfig } from '../../RigConfig'
 import { type AnimationWithState } from './interfaces/AnimationWithState'
 import { type TransformedAnimationClipPair } from './interfaces/TransformedAnimationClipPair'
 
+type AnimationPreviewFactory = (animation: AnimationWithState) => HTMLElement | null
+type DisposablePreviewElement = HTMLElement & { disposePreview?: () => void }
+
 export class AnimationSearch extends EventTarget {
   private all_animations: AnimationWithState[] = []
   private readonly filter_input: HTMLInputElement | null = null
@@ -14,8 +17,18 @@ export class AnimationSearch extends EventTarget {
   private readonly skeleton_type: SkeletonType
 
   private custom_event: CustomEvent | null = null
+  private preview_observer: IntersectionObserver | null = null
+  private readonly generated_preview_load_queue: HTMLElement[] = []
+  private generated_preview_queue_version: number = 0
+  private is_processing_generated_preview_queue: boolean = false
 
-  constructor (filter_input_id: string, animation_list_container_id: string, theme_manager: ThemeManager, skeleton_type: SkeletonType) {
+  constructor (
+    filter_input_id: string,
+    animation_list_container_id: string,
+    theme_manager: ThemeManager,
+    skeleton_type: SkeletonType,
+    private readonly animation_preview_factory: AnimationPreviewFactory | null = null
+  ) {
     super()
     this.filter_input = document.querySelector(`#${filter_input_id}`)
     this.animation_list_container = document.querySelector(`#${animation_list_container_id}`)
@@ -37,6 +50,10 @@ export class AnimationSearch extends EventTarget {
     this.all_animations.push(...new_animations)
     const filter_text = this.filter_input?.value.toLowerCase() ?? ''
     this.render_filtered_animations(filter_text)
+  }
+
+  public rerender_current_filter (): void {
+    this.render_filtered_animations(this.filter_input?.value.toLowerCase() ?? '')
   }
 
   /**
@@ -129,10 +146,24 @@ export class AnimationSearch extends EventTarget {
 
     // Filter animations based on search text
     this.filtered_animations_list = this.all_animations.filter(animation => {
-      return animation.name.toLowerCase().includes(filter_text)
+      const metadata = animation.metadata
+      const searchable_text = [
+        animation.name,
+        metadata?.pack_name ?? '',
+        metadata?.source_format ?? '',
+        metadata?.root_motion ?? '',
+        ...(metadata?.tags ?? [])
+      ].join(' ').toLowerCase()
+
+      return searchable_text.includes(filter_text)
     })
 
     // Clear and rebuild the animation list
+    this.preview_observer?.disconnect()
+    this.preview_observer = null
+    this.generated_preview_load_queue.length = 0
+    this.generated_preview_queue_version += 1
+    this.dispose_loaded_preview_elements()
     this.animation_list_container.innerHTML = ''
 
     // Show "no animations found" if the filtered list is empty
@@ -162,24 +193,49 @@ export class AnimationSearch extends EventTarget {
 
       const anim_name: string = animation_clip.name
       const theme_name: string = this.theme_manager.get_current_theme()
-      const is_custom_animation = animation_clip.metadata?.source_type === 'custom-import'
+      const source_type = animation_clip.metadata?.source_type ?? 'default-library'
+      const is_imported_animation = source_type !== 'default-library'
+      const should_generate_model_preview = this.animation_preview_factory !== null
 
-      const preview_data_src_attribute = is_custom_animation
-        ? ''
-        : ` data-src="../animpreviews/${preview_folder}/${theme_name}_${anim_name}.webm"`
+      const preview_data_src_attribute = !is_imported_animation
+        ? ` data-src="../animpreviews/${preview_folder}/${theme_name}_${anim_name}.webm"`
+        : ''
+      const preview_data_generated_index_attribute = should_generate_model_preview
+        ? ` data-generated-preview-index="${original_index}"`
+        : ''
+      const preview_data_imported_index_attribute = is_imported_animation
+        ? ` data-imported-index="${original_index}"`
+        : ''
 
-      const custom_animation_badge_html = is_custom_animation
-        ? '<span class="anim-custom-badge" title="Custom animation" aria-label="Custom animation">C</span>'
+      let custom_animation_badge_html = ''
+      if (source_type === 'custom-import') {
+        custom_animation_badge_html = '<span class="anim-custom-badge" title="Custom animation" aria-label="Custom animation">C</span>'
+      } else if (source_type === 'stored-pack') {
+        custom_animation_badge_html = '<span class="anim-custom-badge" title="Animation pack" aria-label="Animation pack">P</span>'
+      }
+
+      const rename_button_html = is_imported_animation
+        ? `<button type="button" class="secondary-button anim-rename-button" data-index="${original_index}" title="Rename animation" aria-label="Rename animation">
+            <span class="material-symbols-outlined">edit</span>
+          </button>`
+        : ''
+
+      const delete_button_html = is_imported_animation
+        ? `<button type="button" class="secondary-button anim-delete-button" data-index="${original_index}" title="Delete animation" aria-label="Delete animation">
+            <span class="material-symbols-outlined">delete</span>
+          </button>`
         : ''
 
       const animation_entry_html = `
-        <div class="${is_custom_animation ? 'anim-custom-item' : 'anim-item'}">
+        <div class="${is_imported_animation ? 'anim-custom-item' : 'anim-item'}">
+          ${rename_button_html}
+          ${delete_button_html}
           <button class="secondary-button play" data-index="${original_index}" style="display: flex; flex-direction:column; position: relative;">
             ${custom_animation_badge_html}
-            <div class="anim-preview-placeholder"${preview_data_src_attribute} style="pointer-events: none;"></div>
+            <div class="anim-preview-placeholder"${preview_data_src_attribute}${preview_data_generated_index_attribute}${preview_data_imported_index_attribute} style="pointer-events: none;"></div>
             <label class="styled-checkbox">
-              <input type="checkbox" name="${animation_clip.name}" value="${original_index}" ${checked_attribute}>
-              <span class="anim-preview-label">${this.animation_name_clean(animation_clip.name)}</span>
+              <input type="checkbox" name="${this.escape_attribute(animation_clip.name)}" value="${original_index}" ${checked_attribute}>
+              <span class="anim-preview-label">${this.escape_html(this.animation_name_clean(animation_clip.name))}</span>
             </label>
           </button>
         </div>`
@@ -200,12 +256,25 @@ export class AnimationSearch extends EventTarget {
   private setup_lazy_video_loading (): void {
     // Only set up IntersectionObserver if the container exists
     // any animation entry that is in view will run this code to convert it to a video element
+    this.preview_observer?.disconnect()
+
     const observer = new IntersectionObserver((entries: IntersectionObserverEntry[], _obs: IntersectionObserver) => {
       entries.forEach(entry => {
         const placeholder = entry.target as HTMLElement
 
-        // abort if animation entry is outside active viewing area (but don't unload - causes popping)
         if (!entry.isIntersecting) {
+          placeholder.removeAttribute('data-preview-visible')
+          placeholder.removeAttribute('data-preview-queued')
+          if (this.has_generated_preview(placeholder)) {
+            this.unload_generated_animation_preview(placeholder)
+          }
+          return
+        }
+
+        const generated_animation_index = this.generated_preview_index(placeholder)
+        if (generated_animation_index !== null) {
+          placeholder.setAttribute('data-preview-visible', 'true')
+          this.queue_generated_animation_preview(placeholder)
           return
         }
 
@@ -216,30 +285,188 @@ export class AnimationSearch extends EventTarget {
           return
         }
 
-        // element that just came into view and needs to be converted
-        // to a video element
-        const video = document.createElement('video')
-        video.className = 'anim-preview'
-        const src = placeholder.getAttribute('data-src') ?? ''
-        video.src = src
-        video.width = 100
-        video.height = 120
-        video.loop = true
-        video.muted = true
-        video.playsInline = true // tells mobile browsers to play inline instead of going fullscreen
-        video.autoplay = true
-        placeholder.innerHTML = ''
-        placeholder.appendChild(video)
+        this.load_static_video_preview(placeholder)
       })
-    }, { rootMargin: '300px' }) // rootMargin pre-loads videos before they scroll into view to reduce popping
+    }, { rootMargin: this.animation_preview_factory !== null ? '24px' : '120px' }) // model previews are generated on demand and should stay close to the viewport
 
     // grabs all the animation list elements and tells the observer to start watching them for processing
     const placeholders = this.animation_list_container?.querySelectorAll('.anim-preview-placeholder')
     placeholders?.forEach(ph => { observer.observe(ph) })
+    this.preview_observer = observer
+  }
+
+  private dispose_loaded_preview_elements (): void {
+    if (this.animation_list_container === null) {
+      return
+    }
+
+    const preview_elements = this.animation_list_container.querySelectorAll<DisposablePreviewElement>('.anim-preview-placeholder > *')
+    preview_elements.forEach((preview_element) => {
+      preview_element.disposePreview?.()
+    })
+  }
+
+  private queue_generated_animation_preview (placeholder: HTMLElement): void {
+    if (
+      placeholder.getAttribute('data-preview-loaded') === 'true' ||
+      placeholder.getAttribute('data-preview-queued') === 'true'
+    ) {
+      return
+    }
+
+    placeholder.setAttribute('data-preview-queued', 'true')
+    this.generated_preview_load_queue.push(placeholder)
+    void this.process_generated_preview_load_queue()
+  }
+
+  private async process_generated_preview_load_queue (): Promise<void> {
+    if (this.is_processing_generated_preview_queue) {
+      return
+    }
+
+    const queue_version = this.generated_preview_queue_version
+    this.is_processing_generated_preview_queue = true
+
+    try {
+      while (
+        this.generated_preview_load_queue.length > 0 &&
+        queue_version === this.generated_preview_queue_version
+      ) {
+        const placeholder = this.generated_preview_load_queue.shift()
+        if (placeholder === undefined) {
+          continue
+        }
+
+        placeholder.removeAttribute('data-preview-queued')
+        if (
+          !placeholder.isConnected ||
+          placeholder.getAttribute('data-preview-visible') !== 'true'
+        ) {
+          continue
+        }
+
+        const generated_animation_index = this.generated_preview_index(placeholder)
+        if (generated_animation_index !== null) {
+          this.load_generated_animation_preview(placeholder, generated_animation_index)
+        }
+
+        await this.wait_for_animation_frame()
+      }
+    } finally {
+      this.is_processing_generated_preview_queue = false
+      if (this.generated_preview_load_queue.length > 0) {
+        void this.process_generated_preview_load_queue()
+      }
+    }
+  }
+
+  private async wait_for_animation_frame (): Promise<void> {
+    await new Promise<void>(resolve => {
+      window.requestAnimationFrame(() => {
+        resolve()
+      })
+    })
+  }
+
+  private has_generated_preview (placeholder: HTMLElement): boolean {
+    return this.generated_preview_index(placeholder) !== null
+  }
+
+  private generated_preview_index (placeholder: HTMLElement): string | null {
+    return placeholder.getAttribute('data-generated-preview-index') ?? placeholder.getAttribute('data-imported-index')
+  }
+
+  private load_generated_animation_preview (placeholder: HTMLElement, animation_index_string: string): void {
+    if (placeholder.getAttribute('data-preview-loaded') === 'true') {
+      return
+    }
+
+    const animation_index = Number(animation_index_string)
+    if (!Number.isInteger(animation_index) || animation_index < 0 || animation_index >= this.all_animations.length) {
+      return
+    }
+
+    const animation = this.all_animations[animation_index]
+    const preview_element = this.animation_preview_factory?.(animation)
+    if (preview_element === null || preview_element === undefined) {
+      if (placeholder.getAttribute('data-src') !== null) {
+        this.load_static_video_preview(placeholder)
+        return
+      }
+
+      placeholder.innerHTML = ''
+      placeholder.appendChild(this.create_generated_preview_fallback())
+      placeholder.setAttribute('data-preview-loaded', 'true')
+      return
+    }
+
+    placeholder.innerHTML = ''
+    placeholder.appendChild(preview_element)
+    placeholder.setAttribute('data-preview-loaded', 'true')
+  }
+
+  private unload_generated_animation_preview (placeholder: HTMLElement): void {
+    if (placeholder.getAttribute('data-preview-loaded') !== 'true') {
+      return
+    }
+
+    for (const child of Array.from(placeholder.children)) {
+      const preview_element = child as DisposablePreviewElement
+      preview_element.disposePreview?.()
+    }
+
+    placeholder.innerHTML = ''
+    placeholder.removeAttribute('data-preview-loaded')
+    placeholder.removeAttribute('data-preview-queued')
+    placeholder.removeAttribute('data-preview-visible')
+  }
+
+  private load_static_video_preview (placeholder: HTMLElement): void {
+    const existing_video = placeholder.querySelector('video')
+    if (existing_video != null) {
+      return
+    }
+
+    const src = placeholder.getAttribute('data-src') ?? ''
+    if (src === '') {
+      return
+    }
+
+    const video = document.createElement('video')
+    video.className = 'anim-preview'
+    video.src = src
+    video.width = 100
+    video.height = 120
+    video.loop = true
+    video.muted = true
+    video.playsInline = true // tells mobile browsers to play inline instead of going fullscreen
+    video.autoplay = true
+    placeholder.innerHTML = ''
+    placeholder.appendChild(video)
+    placeholder.setAttribute('data-preview-loaded', 'true')
+  }
+
+  private create_generated_preview_fallback (): HTMLElement {
+    const fallback = document.createElement('div')
+    fallback.className = 'anim-preview anim-imported-preview-fallback'
+    return fallback
   }
 
   public animation_name_clean (input: string): string {
     return input.replace(/_/g, ' ')
+  }
+
+  private escape_html (input: string): string {
+    return input
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;')
+  }
+
+  private escape_attribute (input: string): string {
+    return this.escape_html(input)
   }
 
   /**

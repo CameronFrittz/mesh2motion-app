@@ -123,6 +123,23 @@ export class MixamoMapper {
   }
 
   /**
+   * Normalize Mixamo bone names for matching. Some Mixamo exports include a numeric
+   * rig prefix or namespace separator, such as "mixamorig5LeftArm" or
+   * "mixamorig:LeftArm", while our table stores the canonical "mixamorigLeftArm".
+   */
+  private static normalize_mixamo_bone_name (bone_name: string): string {
+    const lower_name = bone_name.trim().toLowerCase()
+    const mixamo_prefix_index = lower_name.indexOf('mixamorig')
+    const mixamo_name = mixamo_prefix_index >= 0
+      ? lower_name.slice(mixamo_prefix_index)
+      : lower_name
+
+    return mixamo_name
+      .replace(/^mixamorig[\d\s:_.|-]*/g, '')
+      .replace(/[\s:_.|-]/g, '')
+  }
+
+  /**
    * Map Mesh2Motion bones to Mixamo bones
    * @param source_bones - Mesh2Motion skeleton bones
    * @param target_bones - Mixamo skeleton bones
@@ -133,13 +150,21 @@ export class MixamoMapper {
 
     // console.log('=== MIXAMO DIRECT MAPPING ===')
 
+    const target_bones_by_normalized_mixamo_name = new Map<string, BoneMetadata>()
+    for (const target_bone of target_bones) {
+      const normalized_mixamo_name = this.normalize_mixamo_bone_name(target_bone.name)
+      if (!target_bones_by_normalized_mixamo_name.has(normalized_mixamo_name)) {
+        target_bones_by_normalized_mixamo_name.set(normalized_mixamo_name, target_bone)
+      }
+    }
+
     // For each source bone (Mesh2Motion), find matching target bone (Mixamo)
     for (const source_bone of source_bones) {
       const expected_mixamo_name: string | undefined = this.BONE_MAP[source_bone.name]
 
       if (expected_mixamo_name !== undefined) {
-        // Find target bone with this Mixamo name
-        const target_bone: BoneMetadata | undefined = target_bones.find(tb => tb.name === expected_mixamo_name)
+        const normalized_mixamo_name = this.normalize_mixamo_bone_name(expected_mixamo_name)
+        const target_bone: BoneMetadata | undefined = target_bones_by_normalized_mixamo_name.get(normalized_mixamo_name)
 
         if (target_bone !== undefined) {
           mappings.set(target_bone.name, source_bone.name)

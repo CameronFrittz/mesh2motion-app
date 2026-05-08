@@ -40,6 +40,23 @@ export class StepLoadSourceSkeleton extends EventTarget {
     this.load_default_skeleton()
   }
 
+  public load_skeleton_type (skeleton_type: SkeletonType): void {
+    this.skeleton_type = skeleton_type
+
+    if (this.skeleton_type_select !== null) {
+      this.skeleton_type_select.value = skeleton_type
+    }
+
+    this.clear_previous_skeleton()
+
+    const rig_file = RigConfig.rig_file_for(this.skeleton_type) ?? ''
+    this.load_skeleton_from_path(`/${rig_file}`).catch((error) => {
+      console.error('Failed to load saved source skeleton:', error)
+    })
+
+    this.dispatchEvent(new CustomEvent('skeleton-loading'))
+  }
+
   private load_default_skeleton (): void {
     // Set the skeleton type to human and load it automatically
     this.skeleton_type = SkeletonType.Human

@@ -6,7 +6,7 @@ import CustomAnimationValidation from './CustomAnimationValidation.ts'
 import { type AnimationClipMetadata, type TransformedAnimationClipPair } from './interfaces/TransformedAnimationClipPair.ts'
 
 /**
- * Handles the importing of custom animations from GLB files.
+ * Handles the importing of custom animations from GLB, GLTF, and FBX files.
  * This class encapsulates the UI and logic for the import process.
  */
 export class CustomAnimationImporter extends EventTarget {
@@ -84,16 +84,20 @@ export class CustomAnimationImporter extends EventTarget {
     try {
       for (const file of Array.from(files)) {
         const file_name = file.name.toLowerCase()
-        if (!file_name.endsWith('.glb')) {
-          new ModalDialog('Unsupported file type. Please select a GLB file.', 'Error').show()
+        if (!this.is_supported_animation_file(file_name)) {
+          new ModalDialog('Unsupported file type. Please select a GLB, GLTF, or FBX file.', 'Error').show()
           continue
         }
-        await this.import_animation_glb(file)
+        await this.import_animation_file(file)
       }
     } finally {
       input.value = ''
       this.set_enabled(true)
     }
+  }
+
+  private is_supported_animation_file (file_name: string): boolean {
+    return file_name.endsWith('.glb') || file_name.endsWith('.gltf') || file_name.endsWith('.fbx')
   }
 
   private sync_import_context_from_provider (): void {
@@ -105,7 +109,7 @@ export class CustomAnimationImporter extends EventTarget {
     this.set_import_context(skinned_meshes_to_animate, skeleton_scale)
   }
 
-  private async import_animation_glb (file: File): Promise<{ success: boolean, clipCount: number }> {
+  private async import_animation_file (file: File): Promise<{ success: boolean, clipCount: number }> {
     // tell the animation data these are custom animations to help differentiate for custom video previews
     // tags are unused right now, but I want to eventually use them to help filtering
     const metadata_override: Partial<AnimationClipMetadata> = {

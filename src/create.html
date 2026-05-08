@@ -113,8 +113,20 @@
         <div style="margin-bottom: 1rem; padding: 0">
           <span id="current-step-label"></span>
         </div>
+        <div id="saved-model-status" class="saved-model-status" role="status"></div>
 
         <div id="load-model-tools">
+          <div id="saved-models-section" class="alternate-background-section saved-models-section">
+            <span>Saved models</span>
+            <select id="saved-models-select"></select>
+            <div class="saved-model-actions">
+              <button id="load-saved-model-button" class="secondary-button">Load</button>
+              <button id="delete-saved-model-button" class="secondary-button">Delete</button>
+            </div>
+          </div>
+
+          <hr />
+
           <!-- <p class="step-instructions">Supports GLB, GLTF, FBX</p> -->
 
           <label
@@ -340,6 +352,12 @@
           <!-- back to load skeleton -->
           <div class="display: flex; gap: 0.5rem;">
             <button class="no-style-button" id="action_back_to_load_skeleton">&#x2039; Back</button>
+            <button class="secondary-button" id="save-model-button">
+              <span class="button-icon-group">
+                <span class="material-symbols-outlined">save</span>
+                <span>Save model</span>
+              </span>
+            </button>
             <button id="action_bind_pose">Bind pose</button>
           </div>
         </span>
@@ -458,16 +476,16 @@
 
               <button
                 class="secondary-button"
-                id="import-animations-button"
-                data-tippy-content="Import GLB animations. Only Mesh2Motion rigs are supported at this time."
-                aria-label="Import GLB animations. Only Mesh2Motion rigs are supported at this time."
+                id="import-animation-pack-button"
+                data-tippy-content="Import and save an animation pack from a folder of FBXs, selected files, GLB, GLTF, or ZIP."
+                aria-label="Import and save an animation pack from a folder of FBXs, selected files, GLB, GLTF, or ZIP."
               >
-                <span class="material-symbols-outlined">upload</span>
+                <span class="material-symbols-outlined">library_add</span>
               </button>
               <input
-                id="import-animations-input"
+                id="import-animation-pack-input"
                 type="file"
-                accept=".glb"
+                accept=".glb,.gltf,.fbx,.zip"
                 multiple
                 style="display: none"
               />

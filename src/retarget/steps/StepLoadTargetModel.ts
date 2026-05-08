@@ -3,6 +3,7 @@ import { type Mesh2MotionEngine } from '../../Mesh2MotionEngine.ts'
 import { ModalDialog } from '../../lib/ModalDialog.ts'
 import { RetargetUtils } from '../RetargetUtils.ts'
 import { TargetBoneTreeDialog } from '../TargetBoneTreeDialog.ts'
+import { clone_saved_model_source, type SavedModelSource } from '../../lib/saved-models/SavedModelTypes.ts'
 
 /**
  * Handles loading the target model (user-uploaded model) for retargeting
@@ -14,6 +15,7 @@ export class StepLoadTargetModel extends EventTarget {
   private load_model_button: HTMLLabelElement | null = null
 
   private retargetable_meshes: Scene | null = null
+  private current_model_source: SavedModelSource | null = null
 
   constructor (mesh2motion_engine: Mesh2MotionEngine) {
     super()
@@ -28,6 +30,19 @@ export class StepLoadTargetModel extends EventTarget {
 
   public get_retargetable_meshes (): Scene | null {
     return this.retargetable_meshes
+  }
+
+  public get_current_model_source (): SavedModelSource | null {
+    if (this.current_model_source === null) {
+      return null
+    }
+
+    return clone_saved_model_source(this.current_model_source)
+  }
+
+  public load_target_model_source (source: SavedModelSource): void {
+    this.current_model_source = clone_saved_model_source(source)
+    this.load_target_model()
   }
 
   public get_first_skinned_mesh_bones (): Map<string, Bone> {
@@ -92,65 +107,97 @@ export class StepLoadTargetModel extends EventTarget {
         return
       }
 
-      // Configure the model loader to preserve all objects (bones, etc.)
-      this.mesh2motion_engine.load_model_step.set_preserve_skinned_mesh(true)
-
-      // Create a URL for the file and load it
-      const file_url = URL.createObjectURL(file)
-
-      try {
-        this.mesh2motion_engine.load_model_step.load_model_file(file_url, file_extension)
-
-        this.mesh2motion_engine.load_model_step.addEventListener('modelLoadedForRetargeting', () => {
-          console.log('Model loaded for retargeting successfully.')
-          URL.revokeObjectURL(file_url) // Revoke the object URL after loading is complete
-
-          // read in mesh2motion engine's retargetable model data (this is the target)
-          const retargetable_meshes: Scene = this.mesh2motion_engine.load_model_step.get_final_retargetable_model_data()
-          const is_valid_skinned_mesh = RetargetUtils.validate_skinned_mesh_has_bones(retargetable_meshes)
-          if (is_valid_skinned_mesh) {
-            // we have valid skinned mesh(s). The could be very large though,
-            // we let's check to see how large everything is
-            const bounding_box = new Box3().setFromObject(retargetable_meshes)
-            const size = new Vector3()
-            bounding_box.getSize(size)
-            // console.log('Retargetable meshes bounding box size:', size)
-            // console.log('Skinned mesh data to inspect:', retargetable_meshes)
-
-            RetargetUtils.reset_skinned_mesh_to_rest_pose(retargetable_meshes)
-            this.mesh2motion_engine.get_scene().add(retargetable_meshes)
-            const largest_dimension: number = this.calculate_max_mesh_dimension(retargetable_meshes)
-
-            // if the largest dimension is over 20, scale the entire scene down to be
-            const target_height: number = 1.5 // in meters
-            if (largest_dimension > 20) {
-              // calculate scale factor
-              const scale_factor = target_height / largest_dimension
-              console.log('scaling model down because of ', largest_dimension)
-              new ModalDialog('Large Rig Warning',
-                `The model you imported is large (${largest_dimension.toFixed(1)} meters). Mesh2Motion expects 1 unit = 1 meter. Your model will be scaled down. Mixamo rigs will work as long as they only have one skeleton in the model file.`).show()
-              retargetable_meshes.scale.set(scale_factor, scale_factor, scale_factor) // common case with 3d creation tools that use 1 cm = 1 unit
-            }
-
-            // need to compare skeletons. for some reason the GLBs scale down fine, but the FBX bones are not looking right
-            console.log('Final retargetable meshes after potential scaling:', retargetable_meshes)
-
-            // Add skeleton helper
-            this.add_skeleton_helper(retargetable_meshes)
-
-            // Save the final retargetable meshes and dispatch event
-            this.retargetable_meshes = retargetable_meshes
-            this.target_bone_tree_dialog.set_target_bones(this.get_first_skinned_mesh_bones())
-            this.target_bone_tree_dialog.set_target_skinned_mesh_count(this.get_target_skinned_mesh_count())
-            this.dispatchEvent(new CustomEvent('target-model-loaded'))
+      file.arrayBuffer()
+        .then((buffer) => {
+          this.current_model_source = {
+            kind: 'upload',
+            file_name: file.name,
+            file_extension,
+            model_data: buffer.slice(0),
+            byte_size: file.size
           }
-        }, { once: true })
-      } catch (error) {
-        console.error('Error loading model:', error)
-        new ModalDialog('Error loading model file.', 'Error').show()
-        URL.revokeObjectURL(file_url) // Clean up the URL
-      }
+          this.load_target_model()
+        })
+        .catch((error) => {
+          console.error('Error reading model file:', error)
+          new ModalDialog('Error reading model file.', 'Error').show()
+        })
     }
+  }
+
+  private load_target_model (): void {
+    if (this.current_model_source === null) {
+      return
+    }
+
+    this.clear_loaded_target_model()
+
+    // Configure the model loader to preserve all objects (bones, etc.)
+    this.mesh2motion_engine.load_model_step.set_preserve_skinned_mesh(true)
+
+    this.mesh2motion_engine.load_model_step.addEventListener('modelLoadedForRetargeting', () => {
+      console.log('Model loaded for retargeting successfully.')
+      this.process_loaded_target_model()
+    }, { once: true })
+
+    try {
+      this.mesh2motion_engine.load_model_step.load_saved_model_source(this.current_model_source)
+    } catch (error) {
+      console.error('Error loading model:', error)
+      new ModalDialog('Error loading model file.', 'Error').show()
+    }
+  }
+
+  private process_loaded_target_model (): void {
+    // read in mesh2motion engine's retargetable model data (this is the target)
+    const retargetable_meshes: Scene = this.mesh2motion_engine.load_model_step.get_final_retargetable_model_data()
+    const is_valid_skinned_mesh = RetargetUtils.validate_skinned_mesh_has_bones(retargetable_meshes)
+    if (!is_valid_skinned_mesh) {
+      return
+    }
+
+    // we have valid skinned mesh(s). The could be very large though,
+    // we let's check to see how large everything is
+    const bounding_box = new Box3().setFromObject(retargetable_meshes)
+    const size = new Vector3()
+    bounding_box.getSize(size)
+    // console.log('Retargetable meshes bounding box size:', size)
+    // console.log('Skinned mesh data to inspect:', retargetable_meshes)
+
+    RetargetUtils.reset_skinned_mesh_to_rest_pose(retargetable_meshes)
+    this.mesh2motion_engine.get_scene().add(retargetable_meshes)
+    const largest_dimension: number = this.calculate_max_mesh_dimension(retargetable_meshes)
+
+    // if the largest dimension is over 20, scale the entire scene down to be
+    const target_height: number = 1.5 // in meters
+    if (largest_dimension > 20) {
+      // calculate scale factor
+      const scale_factor = target_height / largest_dimension
+      console.log('scaling model down because of ', largest_dimension)
+      new ModalDialog('Large Rig Warning',
+        `The model you imported is large (${largest_dimension.toFixed(1)} meters). Mesh2Motion expects 1 unit = 1 meter. Your model will be scaled down. Mixamo rigs will work as long as they only have one skeleton in the model file.`).show()
+      retargetable_meshes.scale.set(scale_factor, scale_factor, scale_factor) // common case with 3d creation tools that use 1 cm = 1 unit
+    }
+
+    // need to compare skeletons. for some reason the GLBs scale down fine, but the FBX bones are not looking right
+    console.log('Final retargetable meshes after potential scaling:', retargetable_meshes)
+
+    // Add skeleton helper
+    this.add_skeleton_helper(retargetable_meshes)
+
+    // Save the final retargetable meshes and dispatch event
+    this.retargetable_meshes = retargetable_meshes
+    this.target_bone_tree_dialog.set_target_bones(this.get_first_skinned_mesh_bones())
+    this.target_bone_tree_dialog.set_target_skinned_mesh_count(this.get_target_skinned_mesh_count())
+    this.dispatchEvent(new CustomEvent('target-model-loaded'))
+  }
+
+  private clear_loaded_target_model (): void {
+    if (this.retargetable_meshes?.parent !== null && this.retargetable_meshes?.parent !== undefined) {
+      this.retargetable_meshes.parent.remove(this.retargetable_meshes)
+    }
+
+    this.retargetable_meshes = null
   }
 
   private fix_fbx_mixamo_bones (): void {

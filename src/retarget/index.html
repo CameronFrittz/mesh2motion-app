@@ -66,6 +66,7 @@
             <!-- bone mapping step to hook up source and target rig -->
             <span id="bone-mapping-step">
                 <h1>Bring your own rigged model</h1>
+                <div id="saved-rigged-model-status" class="saved-model-status" role="status"></div>
 
                 <div style="max-width: 30rem;">
                     <div style="
@@ -128,6 +129,17 @@
                             <span id="view-bone-tree-button" data-tippy-content="View bone hierarchy for for debugging purposes" style="display: none;">👓</span>
                         </p>
                         <div class="bone-map-content">
+                            <div id="saved-rigged-models-section" class="alternate-background-section saved-models-section">
+                                <span>Saved rigged models</span>
+                                <select id="saved-rigged-models-select"></select>
+                                <div class="saved-model-actions">
+                                    <button id="load-saved-rigged-model-button" class="secondary-button">Load</button>
+                                    <button id="delete-saved-rigged-model-button" class="secondary-button">Delete</button>
+                                </div>
+                            </div>
+
+                            <hr />
+
                             <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
                                 <!-- there are some issues going on with scaling the skeleton for FBX and other formats so we will start simple for now with just GLB files -->
                                 <input type="file" id="upload-file" accept=".glb, .fbx, .zip" style="display: none;" />
@@ -157,6 +169,12 @@
                 </div>
 
                 <div style="display: flex; padding: 1rem; justify-content: flex-end; align-items: center; gap: 0.25rem;">
+                    <button id="save-rigged-model-button" class="secondary-button">
+                        <span class="button-icon-group">
+                            <span class="material-symbols-outlined">save</span>
+                            <span>Save rig</span>
+                        </span>
+                    </button>
                     <button id="continue-to-listing-button" disabled>Continue</button>
                     <span id="continue-button-tooltip"
                         data-tippy-content="Map at least one source bone to a target bone before continuing by dragging a bone from the source bones list to the target bones list."

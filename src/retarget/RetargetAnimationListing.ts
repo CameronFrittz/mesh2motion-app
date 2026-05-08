@@ -1,6 +1,8 @@
 import { AnimationPlayer } from '../lib/processes/animations-listing/AnimationPlayer.ts'
 import { AnimationSearch } from '../lib/processes/animations-listing/AnimationSearch.ts'
 import { AnimationLoader } from '../lib/processes/animations-listing/AnimationLoader.ts'
+import { AnimationPackStore, animation_pack_metadata, apply_animation_pack_name_overrides } from '../lib/processes/animations-listing/AnimationPackStore.ts'
+import { ImportedAnimationPreviewFactory } from '../lib/processes/animations-listing/ImportedAnimationPreviewFactory.ts'
 import { type AnimationClip, AnimationMixer, type SkinnedMesh, Object3D, type AnimationAction } from 'three'
 import type { ThemeManager } from '../lib/ThemeManager.ts'
 import { type TransformedAnimationClipPair } from '../lib/processes/animations-listing/interfaces/TransformedAnimationClipPair.ts'
@@ -16,9 +18,15 @@ export class RetargetAnimationListing extends EventTarget {
   private readonly theme_manager: ThemeManager
   private readonly animation_player: AnimationPlayer
   private readonly animation_loader: AnimationLoader = new AnimationLoader()
+  private readonly animation_pack_store: AnimationPackStore = new AnimationPackStore()
+  private readonly imported_animation_preview_factory: ImportedAnimationPreviewFactory = new ImportedAnimationPreviewFactory(
+    () => AnimationRetargetService.getInstance().get_target_skinned_meshes(),
+    () => AnimationRetargetService.getInstance().get_target_armature()
+  )
   private readonly step_export_retargeted_animations: StepExportRetargetedAnimations = new StepExportRetargetedAnimations()
   private animation_clips_loaded: TransformedAnimationClipPair[] = []
   private animation_mixer: AnimationMixer = new AnimationMixer(new Object3D())
+  private readonly preview_clip_cache: Map<string, AnimationClip> = new Map()
   private readonly ui: UI = UI.getInstance()
 
   private _added_event_listeners: boolean = false
@@ -60,6 +68,8 @@ export class RetargetAnimationListing extends EventTarget {
   public reset_step_data (): void {
     this.animation_clips_loaded = []
     this.animation_mixer = new AnimationMixer(new Object3D())
+    this.preview_clip_cache.clear()
+    this.imported_animation_preview_factory.clear_cache()
     this.animation_player.clear_animation()
   }
 
@@ -100,13 +110,41 @@ export class RetargetAnimationListing extends EventTarget {
     // this animation loader comes from the Mesh2Motion engine, so still
     // pass in the skeleton type this way
     this.animation_loader.load_animations(AnimationRetargetService.getInstance().get_skeleton_type())
-      .then((loaded_clips: TransformedAnimationClipPair[]) => {
-        this.animation_clips_loaded = loaded_clips
+      .then(async (loaded_clips: TransformedAnimationClipPair[]) => {
+        const stored_pack_clips = await this.load_stored_animation_packs()
+        this.animation_clips_loaded = [...loaded_clips, ...stored_pack_clips]
         this.on_all_animations_loaded()
       })
       .catch((error: Error) => {
         console.error('Failed to load animations for retargeting:', error)
       })
+  }
+
+  private async load_stored_animation_packs (): Promise<TransformedAnimationClipPair[]> {
+    try {
+      const skeleton_type = AnimationRetargetService.getInstance().get_skeleton_type()
+      const records = await this.animation_pack_store.list_by_skeleton_type(skeleton_type)
+      const loaded_pack_clips: TransformedAnimationClipPair[] = []
+
+      for (const record of records) {
+        try {
+          const loaded_clips = await this.animation_loader.load_animations_from_array_buffer(
+            record.glb_data,
+            `${record.name}.glb`,
+            1.0,
+            animation_pack_metadata(record)
+          )
+          loaded_pack_clips.push(...apply_animation_pack_name_overrides(record, loaded_clips))
+        } catch (error) {
+          console.warn(`Failed to load saved animation pack "${record.name}" for retargeting:`, error)
+        }
+      }
+
+      return loaded_pack_clips
+    } catch (error) {
+      console.warn('Failed to list saved animation packs for retargeting:', error)
+      return []
+    }
   }
 
   /**
@@ -163,7 +201,10 @@ export class RetargetAnimationListing extends EventTarget {
       'animation-filter',
       'animations-items',
       this.theme_manager,
-      AnimationRetargetService.getInstance().get_skeleton_type()
+      AnimationRetargetService.getInstance().get_skeleton_type(),
+      (animation) => this.imported_animation_preview_factory.create_preview_element(
+        this.preview_animation_clip(animation)
+      )
     )
 
     this.animation_search.initialize_animations(animation_clips)
@@ -182,6 +223,28 @@ export class RetargetAnimationListing extends EventTarget {
           }
         }
       })
+    }
+  }
+
+  private preview_animation_clip (animation: AnimationClip): AnimationClip {
+    const cache_key = [
+      animation.uuid,
+      animation.name,
+      animation.duration,
+      animation.tracks.length
+    ].join(':')
+    const cached_clip = this.preview_clip_cache.get(cache_key)
+    if (cached_clip !== undefined) {
+      return cached_clip
+    }
+
+    try {
+      const retargeted_clip = AnimationRetargetService.getInstance().retarget_animation_clip(animation)
+      this.preview_clip_cache.set(cache_key, retargeted_clip)
+      return retargeted_clip
+    } catch (error) {
+      console.warn('Failed to create retargeted animation preview:', error)
+      return animation
     }
   }
 

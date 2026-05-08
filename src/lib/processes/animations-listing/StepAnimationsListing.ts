@@ -8,12 +8,16 @@ import {
 import { AnimationUtility } from './AnimationUtility.ts'
 import { AnimationLoader, type AnimationLoadProgress } from './AnimationLoader.ts'
 import { CustomAnimationImporter } from './CustomAnimationImporter.ts'
+import { AnimationPackImporter, type AnimationPackImportSuccess } from './AnimationPackImporter.ts'
+import { AnimationPackStore, animation_pack_metadata, apply_animation_pack_name_overrides } from './AnimationPackStore.ts'
 import { type ModelVariationSwitcher } from './ModelVariationSwitcher.ts'
 
 import { SkeletonType } from '../../enums/SkeletonType.ts'
 import { Utility } from '../../Utilities.ts'
 import { type ThemeManager } from '../../ThemeManager.ts'
+import { ModalDialog } from '../../ModalDialog.ts'
 import { AnimationSearch } from './AnimationSearch.ts'
+import { ImportedAnimationPreviewFactory } from './ImportedAnimationPreviewFactory.ts'
 import { type AnimationClipMetadata, type TransformedAnimationClipPair } from './interfaces/TransformedAnimationClipPair.ts'
 
 // Note: EventTarget is a built-ininterface and do not need to import it
@@ -37,6 +41,9 @@ export class StepAnimationsListing extends EventTarget {
   private skeleton_scale: number = 1.0
 
   private readonly custom_animation_importer: CustomAnimationImporter
+  private readonly animation_pack_importer: AnimationPackImporter
+  private readonly animation_pack_store: AnimationPackStore = new AnimationPackStore()
+  private readonly imported_animation_preview_factory: ImportedAnimationPreviewFactory
 
   private _added_event_listeners: boolean = false
   private is_loading_default_animations: boolean = false
@@ -65,6 +72,8 @@ export class StepAnimationsListing extends EventTarget {
     this.theme_manager = theme_manager
 
     this.custom_animation_importer = new CustomAnimationImporter(this.animation_loader)
+    this.animation_pack_importer = new AnimationPackImporter(this.animation_loader)
+    this.imported_animation_preview_factory = new ImportedAnimationPreviewFactory(() => this.skinned_meshes_to_animate)
 
     // fancy way to bind the import context by implementing the function
     // from the CustomAnimationImporter and passing in the current context values. this allows
@@ -76,9 +85,26 @@ export class StepAnimationsListing extends EventTarget {
       }
     })
 
+    this.animation_pack_importer.set_import_context_provider(() => {
+      return {
+        skinned_meshes_to_animate: this.skinned_meshes_to_animate,
+        skeleton_type: this.skeleton_type,
+        skeleton_scale: this.skeleton_scale
+      }
+    })
+
     this.custom_animation_importer.addEventListener('import-success', (event: Event) => {
       const new_clips = (event as CustomEvent<TransformedAnimationClipPair[]>).detail
       this.animation_clips_loaded.push(...new_clips)
+      this.onAllAnimationsLoaded()
+    })
+
+    this.animation_pack_importer.addEventListener('pack-import-success', (event: Event) => {
+      const import_success = (event as CustomEvent<AnimationPackImportSuccess>).detail
+      this.animation_clips_loaded.push(...apply_animation_pack_name_overrides(
+        import_success.record,
+        import_success.animations
+      ))
       this.onAllAnimationsLoaded()
     })
   }
@@ -106,6 +132,7 @@ export class StepAnimationsListing extends EventTarget {
 
     this.reset_step_data()
     this.custom_animation_importer.set_enabled(!this.is_loading_default_animations)
+    this.animation_pack_importer.set_enabled(!this.is_loading_default_animations)
 
     this.skeleton_type = skeleton_type
 
@@ -126,6 +153,7 @@ export class StepAnimationsListing extends EventTarget {
     this.animation_mixer = new AnimationMixer(new Object3D())
     this.current_playing_index = 0
     this.animation_search = null
+    this.imported_animation_preview_factory.clear_cache()
     this.reset_ui_elements()
     this.animation_player.clear_animation()
   }
@@ -177,7 +205,8 @@ export class StepAnimationsListing extends EventTarget {
   }
 
   public is_animation_custom (index: number): boolean {
-    return this.get_animation_metadata(index)?.source_type === 'custom-import'
+    const source_type = this.get_animation_metadata(index)?.source_type
+    return source_type !== undefined && source_type !== 'default-library'
   }
 
   /**
@@ -216,6 +245,8 @@ export class StepAnimationsListing extends EventTarget {
     }
 
     this.skinned_meshes_to_animate = new_skinned_meshes
+    this.imported_animation_preview_factory.clear_cache()
+    this.animation_search?.rerender_current_filter()
 
     // replay current animation on the new meshes
     this.play_animation(this.current_playing_index)
@@ -246,6 +277,7 @@ export class StepAnimationsListing extends EventTarget {
 
     this.is_loading_default_animations = true
     this.custom_animation_importer.set_enabled(false)
+    this.animation_pack_importer.set_enabled(false)
 
     // Reset the animation clips loaded
     this.animation_clips_loaded = []
@@ -254,21 +286,50 @@ export class StepAnimationsListing extends EventTarget {
 
     // Load animations using the new AnimationLoader
     this.animation_loader.load_animations(this.skeleton_type, this.skeleton_scale)
-      .then((loaded_clips: TransformedAnimationClipPair[]) => {
-        this.animation_clips_loaded = loaded_clips
+      .then(async (loaded_clips: TransformedAnimationClipPair[]) => {
+        const stored_pack_clips = await this.load_stored_animation_packs()
+        this.animation_clips_loaded = [...loaded_clips, ...stored_pack_clips]
         this.onAllAnimationsLoaded()
       })
       .catch((error: Error) => {
         console.error('Failed to load animations:', error)
         this.is_loading_default_animations = false
         this.custom_animation_importer.set_enabled(true)
+        this.animation_pack_importer.set_enabled(true)
         // You could emit an error event here or show a user-friendly message
       })
+  }
+
+  private async load_stored_animation_packs (): Promise<TransformedAnimationClipPair[]> {
+    try {
+      const records = await this.animation_pack_store.list_by_skeleton_type(this.skeleton_type)
+      const loaded_pack_clips: TransformedAnimationClipPair[] = []
+
+      for (const record of records) {
+        try {
+          const loaded_clips = await this.animation_loader.load_animations_from_array_buffer(
+            record.glb_data,
+            `${record.name}.glb`,
+            1.0,
+            animation_pack_metadata(record)
+          )
+          loaded_pack_clips.push(...apply_animation_pack_name_overrides(record, loaded_clips))
+        } catch (error) {
+          console.warn(`Failed to load saved animation pack "${record.name}":`, error)
+        }
+      }
+
+      return loaded_pack_clips
+    } catch (error) {
+      console.warn('Failed to list saved animation packs:', error)
+      return []
+    }
   }
 
   private onAllAnimationsLoaded (): void {
     this.is_loading_default_animations = false
     this.custom_animation_importer.set_enabled(true)
+    this.animation_pack_importer.set_enabled(true)
     // sort all animation names alphabetically
     this.animation_clips_loaded.sort((a: TransformedAnimationClipPair, b: TransformedAnimationClipPair) => {
       if (a.display_animation_clip.name < b.display_animation_clip.name) { return -1 }
@@ -429,8 +490,32 @@ export class StepAnimationsListing extends EventTarget {
       this.ui.dom_animation_clip_list.addEventListener('click', (event) => {
         this.update_download_button_enabled()
 
-        if ((event.target != null) && (event.target as HTMLElement).tagName === 'BUTTON') {
-          const animation_index_str = (event.target as HTMLElement).getAttribute('data-index')
+        if (event.target === null) {
+          return
+        }
+
+        const target = event.target as HTMLElement
+        if (target instanceof HTMLInputElement && target.type === 'checkbox') {
+          return
+        }
+
+        const delete_button = target.closest<HTMLButtonElement>('.anim-delete-button')
+        if (delete_button !== null) {
+          const animation_index = Number(delete_button.getAttribute('data-index'))
+          void this.delete_animation(animation_index)
+          return
+        }
+
+        const rename_button = target.closest<HTMLButtonElement>('.anim-rename-button')
+        if (rename_button !== null) {
+          const animation_index = Number(rename_button.getAttribute('data-index'))
+          void this.rename_animation(animation_index)
+          return
+        }
+
+        const play_button = target.closest<HTMLButtonElement>('button.play')
+        if (play_button !== null) {
+          const animation_index_str = play_button.getAttribute('data-index')
           if (animation_index_str != null) {
             const animation_index: number = Number(animation_index_str)
             this.play_animation(animation_index)
@@ -491,10 +576,124 @@ export class StepAnimationsListing extends EventTarget {
   public build_animation_clip_ui (animation_clips_to_load: TransformedAnimationClipPair[], theme_manager: ThemeManager): void {
     // Initialize AnimationSearch if not already done
     // we could switch skeleton types using navigation, so need to re-create in case this happens
-    this.animation_search = new AnimationSearch('animation-filter', 'animations-items', theme_manager, this.skeleton_type)
+    this.animation_search = new AnimationSearch(
+      'animation-filter',
+      'animations-items',
+      theme_manager,
+      this.skeleton_type,
+      (animation) => this.imported_animation_preview_factory.create_preview_element(animation)
+    )
 
     // Use the animation search class to handle the UI
     this.animation_search.initialize_animations(animation_clips_to_load)
+  }
+
+  private async rename_animation (index: number): Promise<void> {
+    const animation_pair = this.animation_clips_loaded[index]
+    if (animation_pair === undefined) {
+      return
+    }
+
+    const current_name = animation_pair.display_animation_clip.name
+    const new_name = window.prompt('Animation name', current_name)
+    if (new_name === null) {
+      return
+    }
+
+    const trimmed_new_name = new_name.trim()
+    if (trimmed_new_name === '' || trimmed_new_name === current_name) {
+      return
+    }
+
+    const metadata = animation_pair.metadata
+    if (metadata.source_type === 'stored-pack') {
+      if (metadata.pack_id === undefined || metadata.original_clip_name === undefined) {
+        new ModalDialog('Rename Failed', 'This animation pack is missing rename metadata. Re-import the pack to rename this animation.').show()
+        return
+      }
+
+      try {
+        const record = await this.animation_pack_store.get(metadata.pack_id)
+        if (record === null) {
+          new ModalDialog('Rename Failed', 'The saved animation pack could not be found.').show()
+          return
+        }
+
+        record.animation_name_overrides = {
+          ...(record.animation_name_overrides ?? {}),
+          [metadata.original_clip_name]: trimmed_new_name
+        }
+        record.updated_at = Date.now()
+        await this.animation_pack_store.put(record)
+      } catch (error) {
+        const error_message = error instanceof Error ? error.message : String(error)
+        new ModalDialog('Rename Failed', error_message).show()
+        return
+      }
+    }
+
+    animation_pair.original_animation_clip.name = trimmed_new_name
+    animation_pair.display_animation_clip.name = trimmed_new_name
+    this.animation_search?.rerender_current_filter()
+    this.update_filtered_animation_listing_ui()
+    this.play_animation(index)
+  }
+
+  private async delete_animation (index: number): Promise<void> {
+    const animation_pair = this.animation_clips_loaded[index]
+    if (animation_pair === undefined) {
+      return
+    }
+
+    const animation_name = animation_pair.display_animation_clip.name
+    const should_delete = window.confirm(`Delete imported animation "${animation_name}"?`)
+    if (!should_delete) {
+      return
+    }
+
+    const metadata = animation_pair.metadata
+    if (metadata.source_type === 'stored-pack') {
+      if (metadata.pack_id === undefined || metadata.original_clip_name === undefined) {
+        new ModalDialog('Delete Failed', 'This animation pack is missing delete metadata. Re-import the pack to delete this animation.').show()
+        return
+      }
+
+      try {
+        const record = await this.animation_pack_store.get(metadata.pack_id)
+        if (record === null) {
+          new ModalDialog('Delete Failed', 'The saved animation pack could not be found.').show()
+          return
+        }
+
+        const deleted_animation_names = new Set(record.deleted_animation_names ?? [])
+        deleted_animation_names.add(metadata.original_clip_name)
+        record.deleted_animation_names = Array.from(deleted_animation_names)
+
+        if (record.animation_name_overrides !== undefined) {
+          delete record.animation_name_overrides[metadata.original_clip_name]
+        }
+
+        record.updated_at = Date.now()
+        await this.animation_pack_store.put(record)
+      } catch (error) {
+        const error_message = error instanceof Error ? error.message : String(error)
+        new ModalDialog('Delete Failed', error_message).show()
+        return
+      }
+    }
+
+    this.animation_clips_loaded.splice(index, 1)
+    this.animation_search?.initialize_animations(this.animation_clips_loaded)
+    this.update_filtered_animation_listing_ui()
+    this.update_download_button_enabled()
+
+    if (this.animation_clips_loaded.length === 0) {
+      this.animation_player.clear_animation()
+      return
+    }
+
+    const next_index = Math.min(index, this.animation_clips_loaded.length - 1)
+    this.play_animation(next_index)
   }
 
   public get_animated_selected_elements (): NodeListOf<Element> {

@@ -38,6 +38,7 @@ import { ModalDialog } from './lib/ModalDialog.ts'
 import { ModelCleanupUtility } from './lib/processes/load-model/ModelCleanupUtility.ts'
 import { SceneEnvironmentManager } from './lib/SceneEnvironmentManager.ts'
 import { CameraShake } from './lib/CameraShake.ts'
+import { SavedModelManager } from './lib/saved-models/SavedModelManager.ts'
 
 export class Mesh2MotionEngine {
   public readonly camera = Generators.create_camera()
@@ -63,6 +64,7 @@ export class Mesh2MotionEngine {
   public animations_listing_step: StepAnimationsListing
   public download_settings: DownloadSettings
   public file_export_step: StepExportToFile
+  public saved_model_manager: SavedModelManager
 
   // for looking at specific bones
   public process_step: ProcessStep = ProcessStep.LoadModel
@@ -99,6 +101,7 @@ export class Mesh2MotionEngine {
     this.animations_listing_step = new StepAnimationsListing(this.theme_manager)
     this.download_settings = new DownloadSettings()
     this.file_export_step = new StepExportToFile()
+    this.saved_model_manager = new SavedModelManager(this)
     this.mesh_drag_bone_placement = new MeshDragBonePlacement(
       this.camera,
       this.edit_skeleton_step,
@@ -120,6 +123,7 @@ export class Mesh2MotionEngine {
 
     this.setup_environment()
     this.eventListeners.addEventListeners()
+    this.saved_model_manager.initialize()
     this.process_step = this.process_step_changed(ProcessStep.LoadModel)
     this.animate() // start the render loop which will continue rendering the scene
     this.inject_build_version()

@@ -1,7 +1,8 @@
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { type AnimationClip } from 'three'
+import { FBXLoader } from 'three/examples/jsm/loaders/FBXLoader.js'
+import { type AnimationClip, type Object3D } from 'three'
 import { AnimationUtility } from './AnimationUtility.ts'
-import { type SkeletonType } from '../../enums/SkeletonType.ts'
+import { SkeletonType } from '../../enums/SkeletonType.ts'
 import { RigConfig } from '../../RigConfig.ts'
 import { type AnimationClipMetadata, type TransformedAnimationClipPair } from './interfaces/TransformedAnimationClipPair.ts'
 import { LoadError, NoAnimationsError } from './AnimationImportErrors.ts'
@@ -18,8 +19,18 @@ export interface AnimationLoadProgress {
   overallBytesTotal: number
 }
 
+export type AnimationFileExtension = 'glb' | 'gltf' | 'fbx'
+
+export interface LoadedAnimationSource {
+  file_name: string
+  extension: AnimationFileExtension
+  animations: AnimationClip[]
+  root: Object3D | null
+}
+
 export class AnimationLoader extends EventTarget {
   private readonly gltf_loader: GLTFLoader = new GLTFLoader()
+  private readonly fbx_loader: FBXLoader = new FBXLoader()
   private animations_file_path: string = 'animations/'
   private readonly file_progress_map = new Map<string, { loaded: number, total: number }>()
   private completed_files: number = 0
@@ -160,6 +171,7 @@ export class AnimationLoader extends EventTarget {
   ): Promise<TransformedAnimationClipPair[]> {
     const file_url = URL.createObjectURL(file)
     const file_total = file.size > 0 ? file.size : 1
+    const file_extension = this.get_animation_file_extension(file.name)
 
     this.file_progress_map.clear()
     this.completed_files = 0
@@ -168,58 +180,179 @@ export class AnimationLoader extends EventTarget {
     this.emit_enhanced_progress(file.name, 0, file_total)
 
     return await new Promise((resolve, reject) => {
+      const handle_loaded_animations = (animations: AnimationClip[]): void => {
+        URL.revokeObjectURL(file_url)
+
+        try {
+          if (animations === null || animations === undefined || animations.length === 0) {
+            this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
+            this.completed_files = 1
+            this.emit_enhanced_progress(file.name, file_total, file_total)
+            throw new NoAnimationsError(`No animations found in the ${file_extension.toUpperCase()} file.`)
+          }
+
+          this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
+          this.completed_files = 1
+          this.emit_enhanced_progress(file.name, file_total, file_total)
+
+          const processed_clips = this.process_loaded_animations(
+            animations,
+            skeleton_scale,
+            metadata_override
+          )
+          resolve(processed_clips)
+        } catch (error) {
+          // Emit final progress to hide the loader UI
+          this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
+          this.completed_files = 1
+          this.emit_enhanced_progress(file.name, file_total, file_total)
+
+          const error_message = error instanceof Error ? error.message : String(error)
+          if (error instanceof NoAnimationsError) {
+            reject(error)
+          } else {
+            reject(new LoadError(`Failed to process animations from ${file.name}: ${error_message}`))
+          }
+        }
+      }
+
+      const handle_progress = (progress_event: ProgressEvent<EventTarget>): void => {
+        if (progress_event.lengthComputable) {
+          const total_bytes = progress_event.total > 0 ? progress_event.total : file_total
+          this.file_progress_map.set(file.name, { loaded: progress_event.loaded, total: total_bytes })
+          this.emit_enhanced_progress(file.name, progress_event.loaded, total_bytes)
+        }
+      }
+
+      const handle_load_error = (error: unknown): void => {
+        URL.revokeObjectURL(file_url)
+        const error_message = error instanceof Error ? error.message : String(error)
+        reject(new LoadError(`Failed to load animation file ${file.name}: ${error_message}`))
+      }
+
+      if (file_extension === 'fbx') {
+        this.fbx_loader.load(
+          file_url,
+          (fbx) => {
+            handle_loaded_animations(fbx.animations as AnimationClip[])
+          },
+          handle_progress,
+          handle_load_error
+        )
+        return
+      }
+
+      this.gltf_loader.load(
+        file_url,
+        (gltf: any) => {
+          handle_loaded_animations(gltf.animations as AnimationClip[])
+        },
+        handle_progress,
+        handle_load_error
+      )
+    })
+  }
+
+  public async load_animation_source_from_file (file: File): Promise<LoadedAnimationSource> {
+    const file_url = URL.createObjectURL(file)
+    const file_extension = this.get_animation_file_extension(file.name)
+
+    return await new Promise((resolve, reject) => {
+      const handle_load_error = (error: unknown): void => {
+        URL.revokeObjectURL(file_url)
+        const error_message = error instanceof Error ? error.message : String(error)
+        reject(new LoadError(`Failed to load animation file ${file.name}: ${error_message}`))
+      }
+
+      if (file_extension === 'fbx') {
+        this.fbx_loader.load(
+          file_url,
+          (fbx) => {
+            URL.revokeObjectURL(file_url)
+            resolve({
+              file_name: file.name,
+              extension: file_extension,
+              animations: fbx.animations as AnimationClip[],
+              root: fbx
+            })
+          },
+          undefined,
+          handle_load_error
+        )
+        return
+      }
+
       this.gltf_loader.load(
         file_url,
         (gltf: any) => {
           URL.revokeObjectURL(file_url)
-
-          try {
-            const animations = gltf.animations as AnimationClip[]
-            if (animations === null || animations === undefined || animations.length === 0) {
-              this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
-              this.completed_files = 1
-              this.emit_enhanced_progress(file.name, file_total, file_total)
-              throw new NoAnimationsError('No animations found in the GLB file.')
-            }
-
-            this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
-            this.completed_files = 1
-            this.emit_enhanced_progress(file.name, file_total, file_total)
-
-            const processed_clips = this.process_loaded_animations(
-              animations,
-              skeleton_scale,
-              metadata_override
-            )
-            resolve(processed_clips)
-          } catch (error) {
-            // Emit final progress to hide the loader UI
-            this.file_progress_map.set(file.name, { loaded: file_total, total: file_total })
-            this.completed_files = 1
-            this.emit_enhanced_progress(file.name, file_total, file_total)
-
-            const error_message = error instanceof Error ? error.message : String(error)
-            if (error instanceof NoAnimationsError) {
-              reject(error)
-            } else {
-              reject(new LoadError(`Failed to process animations from ${file.name}: ${error_message}`))
-            }
-          }
+          resolve({
+            file_name: file.name,
+            extension: file_extension,
+            animations: gltf.animations as AnimationClip[],
+            root: gltf.scene as Object3D
+          })
         },
-        (progress_event) => {
-          if (progress_event.lengthComputable) {
-            const total_bytes = progress_event.total > 0 ? progress_event.total : file_total
-            this.file_progress_map.set(file.name, { loaded: progress_event.loaded, total: total_bytes })
-            this.emit_enhanced_progress(file.name, progress_event.loaded, total_bytes)
+        undefined,
+        handle_load_error
+      )
+    })
+  }
+
+  public async load_animations_from_array_buffer (
+    buffer: ArrayBuffer,
+    file_name: string,
+    skeleton_scale: number = 1.0,
+    metadata_override: Partial<AnimationClipMetadata> = {}
+  ): Promise<TransformedAnimationClipPair[]> {
+    const file_extension = this.get_animation_file_extension(file_name)
+
+    return await new Promise((resolve, reject) => {
+      const handle_loaded_animations = (animations: AnimationClip[]): void => {
+        try {
+          if (animations === null || animations === undefined || animations.length === 0) {
+            throw new NoAnimationsError(`No animations found in the ${file_extension.toUpperCase()} file.`)
           }
+
+          resolve(this.process_loaded_animations(
+            animations,
+            skeleton_scale,
+            metadata_override
+          ))
+        } catch (error) {
+          reject(error)
+        }
+      }
+
+      if (file_extension === 'fbx') {
+        try {
+          const root = this.fbx_loader.parse(buffer, '')
+          handle_loaded_animations(root.animations as AnimationClip[])
+        } catch (error) {
+          reject(error instanceof Error ? error : new LoadError(String(error)))
+        }
+        return
+      }
+
+      this.gltf_loader.parse(
+        buffer,
+        '',
+        (gltf: any) => {
+          handle_loaded_animations(gltf.animations as AnimationClip[])
         },
-        (error) => {
-          URL.revokeObjectURL(file_url)
-          const error_message = error instanceof Error ? error.message : String(error)
-          reject(new LoadError(`Failed to load animation file ${file.name}: ${error_message}`))
+        (error: unknown) => {
+          reject(error instanceof Error ? error : new LoadError(String(error)))
         }
       )
     })
+  }
+
+  private get_animation_file_extension (file_name: string): AnimationFileExtension {
+    const lower_file_name = file_name.toLowerCase()
+
+    if (lower_file_name.endsWith('.fbx')) return 'fbx'
+    if (lower_file_name.endsWith('.gltf')) return 'gltf'
+    return 'glb'
   }
 
   /**
@@ -234,7 +367,8 @@ export class AnimationLoader extends EventTarget {
     const cloned_animations = AnimationUtility.deep_clone_animation_clips(raw_animations)
 
     // Clean track data (remove position tracks except for specific cases)
-    AnimationUtility.clean_track_data(cloned_animations, this.skeleton_type)
+    const skeleton_type = this.skeleton_type ?? SkeletonType.Human
+    AnimationUtility.clean_track_data(cloned_animations, skeleton_type)
 
     // Apply skeleton scaling to position keyframes
     AnimationUtility.apply_skeleton_scale_to_position_keyframes(cloned_animations, skeleton_scale)

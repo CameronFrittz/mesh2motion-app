@@ -20,6 +20,7 @@ import {
 } from 'three'
 import { SkeletonType } from '../../enums/SkeletonType.ts'
 import { RigConfig } from '../../RigConfig.ts'
+import BoneTransformState from '../../interfaces/BoneTransformState.ts'
 
 /*
  * StepEditSkeleton
@@ -313,6 +314,39 @@ export class StepEditSkeleton extends EventTarget {
    */
   public get_preview_plane_height (): number {
     return this.head_weight_correction_height
+  }
+
+  public apply_saved_edit_settings (use_head_weight_correction: boolean, preview_plane_height: number): void {
+    this.enable_head_weight_correction = use_head_weight_correction
+    this.head_weight_correction_height = preview_plane_height
+
+    this.preview_plane_manager.set_visibility(this.enable_head_weight_correction)
+    this.preview_plane_manager.update_height(this.head_weight_correction_height)
+
+    if (this.ui.dom_preview_plane_checkbox !== null) {
+      this.ui.dom_preview_plane_checkbox.checked = this.enable_head_weight_correction
+    }
+
+    if (this.ui.dom_preview_plane_height_input !== null) {
+      this.ui.dom_preview_plane_height_input.value = this.head_weight_correction_height.toString()
+    }
+
+    if (this.ui.dom_preview_plane_height_label !== null) {
+      this.ui.dom_preview_plane_height_label.textContent = this.head_weight_correction_height.toFixed(2)
+    }
+
+    this.show_preview_plane_options()
+  }
+
+  public restore_bone_transforms (bone_transforms: BoneTransformState[]): void {
+    Utility.restore_bone_transforms(this.threejs_skeleton, bone_transforms)
+
+    this.threejs_skeleton.bones.forEach((bone: Bone) => {
+      bone.updateWorldMatrix(true, true)
+    })
+
+    this.clear_undo_history()
+    this.dispatchEvent(new CustomEvent('skeletonTransformed'))
   }
 
   public add_event_listeners (): void {

@@ -44,6 +44,17 @@ export class HumanChainConfig {
     fingersPinkyR: ['mixamorigRightHandPinky1', 'mixamorigRightHandPinky2', 'mixamorigRightHandPinky3', 'mixamorigRightHandPinky4']
   }
 
+  public static build_mixamo_target_config (bone_mapping: Map<string, string>): Record<string, string[]> {
+    if (bone_mapping.size === 0) {
+      return structuredClone(HumanChainConfig.mixamo_config)
+    }
+
+    return HumanChainConfig.build_custom_target_config(
+      HumanChainConfig.mesh2motion_config,
+      bone_mapping
+    )
+  }
+
   // then we can duplicate that source config to a target config. We can go through the bone
   // mapping and swap out all the source bone names for the target bone names
 

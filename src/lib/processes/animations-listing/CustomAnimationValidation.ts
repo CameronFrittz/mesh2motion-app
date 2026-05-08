@@ -83,7 +83,7 @@ export default class CustomAnimationValidation {
   static handle_import_error (error: unknown): { success: boolean, clipCount: number } {
     const error_title = 'Error Importing Animation(s)'
     if (error instanceof NoAnimationsError) {
-      new ModalDialog(error_title, 'No animations found in that glb file').show()
+      new ModalDialog(error_title, 'No animations found in that animation file.').show()
       return { success: false, clipCount: 0 }
     }
 
@@ -94,12 +94,12 @@ export default class CustomAnimationValidation {
     }
 
     if (error instanceof LoadError) {
-      new ModalDialog(error_title, 'failed to load the animation file').show()
+      new ModalDialog(error_title, 'Failed to load the animation file.').show()
       return { success: false, clipCount: 0 }
     }
 
     // Unknown error
-    new ModalDialog(error_title, 'failed to import animations from the glb file for an unknown reason').show()
+    new ModalDialog(error_title, 'Failed to import animations from the file for an unknown reason.').show()
     return { success: false, clipCount: 0 }
   }
 }

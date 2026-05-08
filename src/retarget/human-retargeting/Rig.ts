@@ -128,6 +128,11 @@ export class Rig {
   // it helps with calculations with hips where characters might have different heights
   private buildRigScalar (chain_key: string): this {
     const ch: RigItem[] = this.chains[chain_key]
+    if (ch.length === 0) {
+      console.warn('Rig.buildRigScalar: Cannot calculate rig scalar because chain is empty:', chain_key)
+      return this
+    }
+
     const j: Joint = this.tpose.joints[ch[0].idx]
     this.scalar = j.world.pos[1]
     return this

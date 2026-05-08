@@ -1,10 +1,18 @@
 import { type AnimationClip } from 'three'
 
-export type AnimationSourceType = 'default-library' | 'custom-import'
+export type AnimationSourceType = 'default-library' | 'custom-import' | 'stored-pack'
+export type AnimationRootMotionMode = 'unknown' | 'in-place' | 'root-motion' | 'mixed'
 
 export interface AnimationClipMetadata {
   source_type: AnimationSourceType
   tags: string[]
+  pack_name?: string
+  pack_id?: string
+  original_clip_name?: string
+  imported_at?: number
+  source_format?: string
+  source_files?: string[]
+  root_motion?: AnimationRootMotionMode
 }
 
 export interface TransformedAnimationClipPair {

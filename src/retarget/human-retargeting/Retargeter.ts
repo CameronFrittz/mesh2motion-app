@@ -103,13 +103,18 @@ export class Retargeter {
    * Bake the retargeted animation into Three.js keyframe tracks
    * Samples the animation at the specified frame rate and captures bone transforms
    * @param fps - Frames per second to sample at (default: 30)
+   * @param root_position_bone_names - Bone names that should keep position tracks for root motion
    * @returns Array of keyframe tracks for the retargeted animation
    */
-  public bake_animation_to_tracks (fps: number = 30): Array<THREE.QuaternionKeyframeTrack | THREE.VectorKeyframeTrack> {
+  public bake_animation_to_tracks (
+    fps: number = 30,
+    root_position_bone_names: string[] = ['hips']
+  ): Array<THREE.QuaternionKeyframeTrack | THREE.VectorKeyframeTrack> {
     const tracks: Array<THREE.QuaternionKeyframeTrack | THREE.VectorKeyframeTrack> = []
     const duration = this.clip.duration
     const frame_time = 1 / fps
     const frame_count = Math.ceil(duration * fps) + 1
+    const normalized_root_position_bone_names = root_position_bone_names.map(name => name.toLowerCase().trim())
 
     // Storage for keyframe data per bone
     const bone_data = new Map<string, { times: number[], positions: number[], quaternions: number[] }>()
@@ -162,9 +167,8 @@ export class Retargeter {
       tracks.push(quat_track)
 
       // add root motion track
-      // TODO: this needs to be a bit smarter to know which track
-      // has the root bone (hard-coding where Mixamo stores root motion)
-      if (bone_name.toLowerCase().trim().includes('hips')) {
+      const normalized_bone_name = bone_name.toLowerCase().trim()
+      if (normalized_root_position_bone_names.some(root_bone_name => normalized_bone_name.includes(root_bone_name))) {
         const pos_track = new THREE.VectorKeyframeTrack(
           `${bone_name}.position`,
           data.times,

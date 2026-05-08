@@ -2,6 +2,7 @@ import { UI } from '../../UI.ts'
 import { ModelZipLoader } from './ModelZipLoader.ts'
 import { CustomFBXLoader, type FBXResults } from './CustomFBXLoader.ts'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js'
 import { RigConfig } from '../../RigConfig.ts'
 
 import { Scene } from 'three/src/scenes/Scene.js'
@@ -11,6 +12,7 @@ import { BufferGeometry, Group, MeshPhongMaterial, Object3DEventMap, type Materi
 import { ModalDialog } from '../../ModalDialog.ts'
 import { ModelCleanupUtility } from './ModelCleanupUtility.ts'
 import { PlatformUtils } from '../../PlatformUtils.ts'
+import { clone_saved_model_source, type SavedModelSource } from '../../saved-models/SavedModelTypes.ts'
 
 // Note: EventTarget is a built-ininterface and do not need to import it
 export class StepLoadModel extends EventTarget {
@@ -25,6 +27,8 @@ export class StepLoadModel extends EventTarget {
   private debug_model_loading: boolean = false
 
   private model_display_name: string = 'Imported Model'
+  private current_model_source: SavedModelSource | null = null
+  private active_model_object_url: string | null = null
 
   // there can be multiple objects in a model, so store them in a list
   private readonly geometry_list: BufferGeometry[] = []
@@ -166,15 +170,29 @@ export class StepLoadModel extends EventTarget {
     if (this.ui.dom_upload_model_button !== null) {
       // handle file upload
       this.ui.dom_upload_model_button.addEventListener('change', (event: Event) => {
-        const file = event.target.files[0]
+        const target = event.target as HTMLInputElement | null
+        const file = target?.files?.[0]
+        if (file === undefined) {
+          return
+        }
+
         const file_extension: string = this.get_file_extension(file.name)
 
-        const reader = new FileReader()
-        reader.readAsDataURL(file)
-        reader.onload = () => {
-          console.log('File reader loaded', reader)
-          this.load_model_file(reader.result, file_extension)
-        }
+        file.arrayBuffer()
+          .then((buffer) => {
+            this.current_model_source = {
+              kind: 'upload',
+              file_name: file.name,
+              file_extension,
+              model_data: buffer.slice(0),
+              byte_size: file.size
+            }
+            this.load_model_from_array_buffer(buffer, file_extension)
+          })
+          .catch((error) => {
+            console.error('Could not read uploaded model file', error)
+            new ModalDialog('Could not read uploaded model file', error?.message || error).show()
+          })
       })
 
       // iOS has a weird issue with accepted file extensions, so we need to just
@@ -199,6 +217,12 @@ export class StepLoadModel extends EventTarget {
         if (model_selection !== null) {
           const file_name = model_selection.options[model_selection.selectedIndex].value
           const file_extension: string = this.get_file_extension(file_name)
+          this.current_model_source = {
+            kind: 'path',
+            file_name: file_name.split('/').pop() ?? file_name,
+            file_extension,
+            model_path: file_name
+          }
           this.load_model_file(file_name, file_extension)
         }
       })
@@ -220,12 +244,14 @@ export class StepLoadModel extends EventTarget {
       return 'UNDEFINED'
     }
 
-    return file_extension
+    return file_extension.toLowerCase()
   }
 
   public clear_loaded_model_data (): void {
+    this.revoke_active_model_object_url()
     this.original_model_data = new Scene()
     this.final_mesh_data = new Scene()
+    this.current_model_source = null
     this.geometry_list.length = 0
     this.material_list.length = 0
     this.original_geometry_positions = []
@@ -234,6 +260,45 @@ export class StepLoadModel extends EventTarget {
     this.objects_count = 0
     this.mesh_has_broken_material = false
     this.preserve_skinned_mesh = false
+  }
+
+  public get_current_model_source (): SavedModelSource | null {
+    if (this.current_model_source === null) {
+      return null
+    }
+
+    return clone_saved_model_source(this.current_model_source)
+  }
+
+  public load_saved_model_source (source: SavedModelSource): void {
+    this.current_model_source = clone_saved_model_source(source)
+
+    if (source.kind === 'upload') {
+      this.load_model_from_array_buffer(source.model_data.slice(0), source.file_extension)
+      return
+    }
+
+    this.load_model_file(source.model_path, source.file_extension)
+  }
+
+  public async export_prepared_model_source (file_name: string): Promise<SavedModelSource> {
+    if (this.final_mesh_data.children.length === 0) {
+      throw new Error('No model data is ready to save.')
+    }
+
+    const export_scene = this.final_mesh_data.clone(true)
+    export_scene.traverse((child) => {
+      child.visible = true
+    })
+
+    const model_data = await this.export_scene_to_glb(export_scene)
+    return {
+      kind: 'upload',
+      file_name: `${file_name}.glb`,
+      file_extension: 'glb',
+      model_data,
+      byte_size: model_data.byteLength
+    }
   }
 
   public reset_model_position (): void {
@@ -276,6 +341,66 @@ export class StepLoadModel extends EventTarget {
     } else {
       console.error('Unsupported file format to load. Only acccepts FBX, (ZIP)GLTF+BIN, GLB:', model_file_path)
     }
+  }
+
+  private load_model_from_array_buffer (buffer: ArrayBuffer, file_extension: string): void {
+    if (file_extension === 'zip') {
+      this.load_model_file(buffer.slice(0), file_extension)
+      return
+    }
+
+    this.revoke_active_model_object_url()
+    const blob = new Blob([buffer], { type: this.mime_type_for_file_extension(file_extension) })
+    this.active_model_object_url = URL.createObjectURL(blob)
+    this.load_model_file(this.active_model_object_url, file_extension)
+  }
+
+  private mime_type_for_file_extension (file_extension: string): string {
+    if (file_extension === 'glb') {
+      return 'model/gltf-binary'
+    }
+
+    if (file_extension === 'fbx') {
+      return 'application/octet-stream'
+    }
+
+    return 'application/octet-stream'
+  }
+
+  private revoke_active_model_object_url (): void {
+    if (this.active_model_object_url === null) {
+      return
+    }
+
+    URL.revokeObjectURL(this.active_model_object_url)
+    this.active_model_object_url = null
+  }
+
+  private async export_scene_to_glb (export_scene: Scene): Promise<ArrayBuffer> {
+    return await new Promise<ArrayBuffer>((resolve, reject) => {
+      const gltf_exporter = new GLTFExporter()
+      const export_options = {
+        binary: true,
+        onlyVisible: false,
+        embedImages: true
+      }
+
+      gltf_exporter.parse(
+        export_scene,
+        (result: ArrayBuffer | object) => {
+          if (result instanceof ArrayBuffer) {
+            resolve(result)
+            return
+          }
+
+          reject(new Error('Prepared model export did not return binary GLB data.'))
+        },
+        (error: any) => {
+          reject(error)
+        },
+        export_options
+      )
+    })
   }
 
   private load_fbx_file (model_file_path: string | ArrayBuffer | null): void {

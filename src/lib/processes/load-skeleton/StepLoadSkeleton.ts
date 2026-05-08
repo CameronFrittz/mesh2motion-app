@@ -1,7 +1,7 @@
 import { UI } from '../../UI.ts'
 import { Object3D, type Scene, type Object3DEventMap } from 'three'
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
-import { SkeletonType, type HandSkeletonType } from '../../enums/SkeletonType.js'
+import { HandSkeletonType, SkeletonType } from '../../enums/SkeletonType.js'
 import { RigConfig } from '../../RigConfig.ts'
 import type GLTFResult from './interfaces/GLTFResult.ts'
 import { add_origin_markers, remove_origin_markers } from './OriginMarkerManager'
@@ -43,6 +43,52 @@ export class StepLoadSkeleton extends EventTarget {
   // animations listing will use this to scale all position keyframes
   public skeleton_scale (): number {
     return this.skeleton_scale_percentage
+  }
+
+  public selected_hand_skeleton_type (): HandSkeletonType {
+    return this.hand_skeleton_type()
+  }
+
+  public apply_saved_skeleton_settings (
+    skeleton_type: SkeletonType,
+    hand_skeleton_type: HandSkeletonType,
+    skeleton_scale: number
+  ): void {
+    this.manual_set_skeleton_type = skeleton_type
+    this.skeleton_scale_percentage = skeleton_scale
+
+    if (this.ui.dom_skeleton_drop_type !== null) {
+      if (this.ui.dom_skeleton_drop_type.options.length === 0) {
+        RigConfig.populate_skeleton_select(this.ui.dom_skeleton_drop_type)
+      }
+
+      const placeholder_index = Array.from(this.ui.dom_skeleton_drop_type.options)
+        .findIndex((option) => option.value === 'select-skeleton')
+      if (placeholder_index >= 0) {
+        this.ui.dom_skeleton_drop_type.options.remove(placeholder_index)
+      }
+
+      this.ui.dom_skeleton_drop_type.value = skeleton_type
+    }
+
+    if (this.ui.dom_hand_skeleton_selection !== null) {
+      this.ui.dom_hand_skeleton_selection.value = hand_skeleton_type
+    }
+
+    if (this.ui.dom_scale_skeleton_input !== null) {
+      this.ui.dom_scale_skeleton_input.value = skeleton_scale.toString()
+    }
+
+    if (this.ui.dom_scale_skeleton_percentage_display !== null) {
+      this.ui.dom_scale_skeleton_percentage_display.textContent = `${Math.round(skeleton_scale * 100)}%`
+    }
+
+    if (this.ui.dom_scale_skeleton_controls !== null) {
+      this.ui.dom_scale_skeleton_controls.style.display = 'flex'
+    }
+
+    this.toggle_ui_hand_skeleton_options()
+    this.allow_proceeding_to_next_step(true)
   }
 
   constructor (main_scene: Scene) {
@@ -116,6 +162,10 @@ export class StepLoadSkeleton extends EventTarget {
 
   private hand_skeleton_type (): HandSkeletonType {
     const hand_selection = this.ui.dom_hand_skeleton_selection?.options
+    if (hand_selection === undefined || this.ui.dom_hand_skeleton_selection === null) {
+      return HandSkeletonType.AllFingers
+    }
+
     return hand_selection[hand_selection.selectedIndex].value as HandSkeletonType
   }
 

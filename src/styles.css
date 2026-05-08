@@ -489,11 +489,13 @@ option {
     border: 1px solid var(--bg-tertiary);
     gap: 0.25rem;
     flex-wrap: wrap;
+    align-content: flex-start;
+    align-items: flex-start;
     overflow-x: hidden;
     width: 24rem; /* creates 3 column of animation items */
 }
 
-#animations-items div {
+#animations-items > div {
     display: inline-flex;
     padding: 0;
 }
@@ -506,10 +508,13 @@ option {
 
 
 .anim-item, .anim-custom-item {
+    position: relative;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
     padding: 0;
+    box-sizing: border-box;
+    overflow: hidden;
 
     transition: box-shadow 0.2s ease-in-out;
 
@@ -523,12 +528,61 @@ option {
     border: 1px solid var(--bg-tertiary);
 }
 
+.anim-item > button.play,
+.anim-custom-item > button.play {
+    width: 100%;
+    height: 100%;
+    min-width: 0;
+    padding: 0;
+    align-items: stretch;
+    justify-content: space-between;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+
+.anim-preview-placeholder {
+    width: 100px;
+    height: 120px;
+    flex: 0 0 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.anim-preview {
+    width: 100px;
+    height: 120px;
+    display: block;
+    object-fit: contain;
+}
 
 .anim-preview-label {
+    min-width: 0;
     font-size: 90%;
     cursor: pointer;
     line-height: 110%;
     text-align: left;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+}
+
+.anim-imported-preview {
+    display: block;
+    object-fit: contain;
+}
+
+.anim-imported-preview-fallback {
+    width: 100px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    background: var(--bg-secondary);
+    font-size: 2.4rem;
 }
 
 
@@ -627,6 +681,21 @@ input[type="file"] {
     font-size: 1rem; /* Adjust font size for better readability */
 }
 
+.anim-item .styled-checkbox,
+.anim-custom-item .styled-checkbox {
+    width: 100%;
+    min-height: 40px;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0.25rem 0.25rem 0.35rem;
+    overflow: hidden;
+}
+
+.anim-item .styled-checkbox input[type="checkbox"],
+.anim-custom-item .styled-checkbox input[type="checkbox"] {
+    flex: 0 0 20px;
+}
+
 #bone-selection-section {
     margin: 0;
     background: var(--bg-alternate);
@@ -642,6 +711,24 @@ input[type="file"] {
     gap: 1rem; 
     background-color: var(--bg-alternate); 
     padding: 1rem;
+}
+
+.saved-models-section {
+    gap: 0.5rem;
+}
+
+.saved-model-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0;
+}
+
+.saved-model-status {
+    min-height: 1.2rem;
+    color: var(--text-alternate);
+    padding: 0;
+    margin-bottom: 0.5rem;
 }
 
 
@@ -745,6 +832,57 @@ input[type="file"] {
     font-size: 0.9rem;
     pointer-events: none;
     padding: 0.5rem 1rem;
+}
+
+.anim-rename-button,
+.anim-delete-button {
+    position: absolute;
+    right: 0.2rem;
+    z-index: 2;
+    min-width: 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    padding: 0;
+    border-radius: 0.3rem;
+}
+
+.anim-rename-button {
+    top: 0.2rem;
+}
+
+.anim-delete-button {
+    top: 2rem;
+}
+
+.anim-rename-button .material-symbols-outlined,
+.anim-delete-button .material-symbols-outlined {
+    font-size: 1rem;
+    pointer-events: none;
+}
+
+.animation-pack-import-menu {
+    position: fixed;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    width: 18rem;
+    padding: 0.8rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--bg-tertiary);
+    box-shadow: var(--box-shadow);
+}
+
+.animation-pack-import-menu-option {
+    justify-content: flex-start;
+    gap: 0.8rem;
+    width: 100%;
+    min-height: 3.8rem;
+    padding: 0.6rem 1rem;
+}
+
+.animation-pack-import-menu-option .material-symbols-outlined {
+    pointer-events: none;
 }
 
 .action-icon {

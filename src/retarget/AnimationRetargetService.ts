@@ -205,7 +205,7 @@ export class AnimationRetargetService {
     // if not, we will need to manually build the config from the bone mappings
     if (target_mapping_type === TargetBoneMappingType.Mixamo) {
       source_rig.fromConfig(HumanChainConfig.mesh2motion_config)
-      target_rig.fromConfig(HumanChainConfig.mixamo_config)
+      target_rig.fromConfig(HumanChainConfig.build_mixamo_target_config(this.get_bone_mappings()))
     } else if (target_mapping_type === TargetBoneMappingType.Custom) {
       const custom_source_config = HumanChainConfig.build_custom_source_config(this.get_bone_mappings())
       const custom_target_config = HumanChainConfig.build_custom_target_config(custom_source_config, this.get_bone_mappings())
